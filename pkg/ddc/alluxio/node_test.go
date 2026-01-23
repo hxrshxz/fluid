@@ -19,7 +19,6 @@ package alluxio
 import (
 	"context"
 	"fmt"
-	"testing"
 
 	"github.com/fluid-cloudnative/fluid/api/v1alpha1"
 	"github.com/fluid-cloudnative/fluid/pkg/ddc/base"
@@ -34,11 +33,6 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-func TestNode(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Node Suite")
-}
 
 // getTestAlluxioEngineNode creates and returns a test instance of AlluxioEngine.
 func getTestAlluxioEngineNode(client client.Client, name string, namespace string, withRunTime bool) *AlluxioEngine {
