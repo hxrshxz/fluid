@@ -1,0 +1,284 @@
+/*
+Copyright 2023 The Fluid Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package alluxio
+
+import (
+	"os"
+	"testing"
+
+	datav1alpha1 "github.com/fluid-cloudnative/fluid/api/v1alpha1"
+	"github.com/fluid-cloudnative/fluid/pkg/ddc/base"
+	cruntime "github.com/fluid-cloudnative/fluid/pkg/runtime"
+	"github.com/fluid-cloudnative/fluid/pkg/utils/fake"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
+)
+
+func TestGenerateDataBackupValueFile(t *testing.T) {
+	testCases := []struct {
+		name        string
+		dataBackup  *datav1alpha1.DataBackup
+		runtime     *datav1alpha1.AlluxioRuntime
+		dataset     *datav1alpha1.Dataset
+		masterPod   *corev1.Pod
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid databackup with single master",
+			dataBackup: &datav1alpha1.DataBackup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-backup",
+					Namespace: "default",
+				},
+				Spec: datav1alpha1.DataBackupSpec{
+					Dataset:    "test-dataset",
+					BackupPath: "pvc://backup-pvc/data",
+				},
+			},
+			runtime: &datav1alpha1.AlluxioRuntime{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-dataset",
+					Namespace: "default",
+				},
+				Spec: datav1alpha1.AlluxioRuntimeSpec{
+					Replicas: 1,
+				},
+			},
+			dataset: &datav1alpha1.Dataset{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-dataset",
+					Namespace: "default",
+					UID:       "test-uid",
+				},
+			},
+			masterPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-dataset-master-0",
+					Namespace: "default",
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "test-node",
+					Containers: []corev1.Container{
+						{
+							Name: "alluxio-master",
+							Ports: []corev1.ContainerPort{
+								{
+									Name:          "rpc",
+									ContainerPort: 19998,
+								},
+							},
+						},
+					},
+				},
+				Status: corev1.PodStatus{
+					PodIP: "10.0.0.1",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid databackup with RunAs",
+			dataBackup: &datav1alpha1.DataBackup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-backup-runas",
+					Namespace: "default",
+				},
+				Spec: datav1alpha1.DataBackupSpec{
+					Dataset:    "test-dataset",
+					BackupPath: "pvc://backup-pvc/data",
+					RunAs: &datav1alpha1.User{
+						UID: ptr.To(int64(1000)),
+						GID: ptr.To(int64(1000)),
+					},
+				},
+			},
+			runtime: &datav1alpha1.AlluxioRuntime{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-dataset",
+					Namespace: "default",
+				},
+				Spec: datav1alpha1.AlluxioRuntimeSpec{
+					Replicas: 1,
+				},
+			},
+			dataset: &datav1alpha1.Dataset{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-dataset",
+					Namespace: "default",
+					UID:       "test-uid",
+				},
+			},
+			masterPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-dataset-master-0",
+					Namespace: "default",
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "test-node",
+					Containers: []corev1.Container{
+						{
+							Name: "alluxio-master",
+							Ports: []corev1.ContainerPort{
+								{
+									Name:          "rpc",
+									ContainerPort: 19998,
+								},
+							},
+						},
+					},
+				},
+				Status: corev1.PodStatus{
+					PodIP: "10.0.0.1",
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			objs := []runtime.Object{}
+			if tc.runtime != nil {
+				objs = append(objs, tc.runtime)
+			}
+			if tc.dataset != nil {
+				objs = append(objs, tc.dataset)
+			}
+			if tc.masterPod != nil {
+				objs = append(objs, tc.masterPod)
+			}
+
+			client := fake.NewFakeClientWithScheme(testScheme, objs...)
+			runtimeInfo, err := base.BuildRuntimeInfo("test-dataset", "default", "alluxio")
+			if err != nil {
+				t.Fatalf("failed to build runtime info: %v", err)
+			}
+
+			engine := &AlluxioEngine{
+				Client:      client,
+				name:        "test-dataset",
+				namespace:   "default",
+				runtime:     tc.runtime,
+				runtimeInfo: runtimeInfo,
+				Log:         fake.NullLogger(),
+			}
+
+			ctx := cruntime.ReconcileRequestContext{
+				Log: fake.NullLogger(),
+			}
+
+			valueFileName, err := engine.generateDataBackupValueFile(ctx, tc.dataBackup)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tc.errorMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if valueFileName == "" {
+					t.Error("expected non-empty value file name")
+				} else {
+					defer os.Remove(valueFileName)
+					if _, err := os.Stat(valueFileName); os.IsNotExist(err) {
+						t.Errorf("value file %s was not created", valueFileName)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateDataBackupValueFileInvalidObject(t *testing.T) {
+	client := fake.NewFakeClientWithScheme(testScheme)
+	runtimeInfo, err := base.BuildRuntimeInfo("test", "default", "alluxio")
+	if err != nil {
+		t.Fatalf("failed to build runtime info: %v", err)
+	}
+
+	engine := &AlluxioEngine{
+		Client:      client,
+		name:        "test",
+		namespace:   "default",
+		runtimeInfo: runtimeInfo,
+		Log:         fake.NullLogger(),
+	}
+
+	ctx := cruntime.ReconcileRequestContext{
+		Log: fake.NullLogger(),
+	}
+
+	invalidObject := &datav1alpha1.Dataset{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "not-a-databackup",
+			Namespace: "default",
+		},
+	}
+
+	valueFileName, err := engine.generateDataBackupValueFile(ctx, invalidObject)
+
+	if err == nil {
+		t.Error("expected error for invalid object type, got nil")
+	}
+	if valueFileName != "" {
+		t.Errorf("expected empty value file name, got %s", valueFileName)
+	}
+}
+
+func TestGenerateDataBackupValueFileRuntimeNotFound(t *testing.T) {
+	dataBackup := &datav1alpha1.DataBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-backup",
+			Namespace: "default",
+		},
+		Spec: datav1alpha1.DataBackupSpec{
+			Dataset:    "nonexistent-dataset",
+			BackupPath: "pvc://backup-pvc/data",
+		},
+	}
+
+	client := fake.NewFakeClientWithScheme(testScheme)
+	runtimeInfo, err := base.BuildRuntimeInfo("nonexistent-dataset", "default", "alluxio")
+	if err != nil {
+		t.Fatalf("failed to build runtime info: %v", err)
+	}
+
+	engine := &AlluxioEngine{
+		Client:      client,
+		name:        "nonexistent-dataset",
+		namespace:   "default",
+		runtimeInfo: runtimeInfo,
+		Log:         fake.NullLogger(),
+	}
+
+	ctx := cruntime.ReconcileRequestContext{
+		Log: fake.NullLogger(),
+	}
+
+	valueFileName, err := engine.generateDataBackupValueFile(ctx, dataBackup)
+
+	if err == nil {
+		t.Error("expected error for runtime not found, got nil")
+	}
+	if valueFileName != "" {
+		t.Errorf("expected empty value file name, got %s", valueFileName)
+	}
+}
