@@ -19,34 +19,28 @@ package alluxio
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"testing"
 
 	"github.com/fluid-cloudnative/fluid/api/v1alpha1"
 	"github.com/fluid-cloudnative/fluid/pkg/ddc/base"
 	"github.com/fluid-cloudnative/fluid/pkg/utils/fake"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+func TestNode(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Node Suite")
+}
+
 // getTestAlluxioEngineNode creates and returns a test instance of AlluxioEngine.
-// It initializes the AlluxioEngine with the provided client, name, and namespace.
-// If withRunTime is true, it also sets up a runtime and runtimeInfo for the engine.
-//
-// Parameters:
-//   - client: The Kubernetes client used by the AlluxioEngine.
-//   - name: The name of the AlluxioEngine instance.
-//   - namespace: The namespace in which the AlluxioEngine resides.
-//   - withRunTime: A boolean flag indicating whether to initialize the runtime and runtimeInfo.
-//
-// Returns:
-//   - A pointer to an AlluxioEngine instance configured with the provided parameters.
 func getTestAlluxioEngineNode(client client.Client, name string, namespace string, withRunTime bool) *AlluxioEngine {
 	engine := &AlluxioEngine{
 		runtime:     nil,
@@ -63,271 +57,276 @@ func getTestAlluxioEngineNode(client client.Client, name string, namespace strin
 	return engine
 }
 
-// TestSyncScheduleInfoToCacheNodes tests the SyncScheduleInfoToCacheNodes function of AlluxioEngine.
-// Functionality: Verifies that AlluxioEngine correctly syncs cache node label information to Kubernetes Node objects.
-// Parameters:
-//   - t *testing.T: Standard testing object for test reporting and logging.
-//
-// Return: None (testing function).
-// Notes:
-//   - Uses fake Kubernetes client with a predefined schema and runtime objects.
-//   - Covers multiple test scenarios:
-//     1. "create": A pod with controller reference should cause the node to be labeled.
-//     2. "add": Similar to create, ensures label is added to the node associated with the pod.
-//     3. "noController": Pod has no controller reference; no node should be labeled.
-//     4. "deprecated": Uses a DaemonSet instead of StatefulSet; should not apply label.
-//   - Fails the test if expected node label state does not match actual state.
-func TestSyncScheduleInfoToCacheNodes(t *testing.T) {
-	type fields struct {
-		// runtime   *datav1alpha1.AlluxioRuntime
-		worker    *appsv1.StatefulSet
-		pods      []*v1.Pod
-		ds        *appsv1.DaemonSet
-		nodes     []*v1.Node
-		name      string
-		namespace string
-	}
-	testcases := []struct {
-		name      string
-		fields    fields
+var _ = Describe("SyncScheduleInfoToCacheNodes", func() {
+	var (
+		engine    *AlluxioEngine
+		c         client.Client
 		nodeNames []string
-	}{
-		{
-			name: "create",
-			fields: fields{
-				name:      "spark",
-				namespace: "big-data",
-				worker: &appsv1.StatefulSet{
-					TypeMeta: metav1.TypeMeta{
-						Kind:       "StatefulSet",
-						APIVersion: "apps/v1",
+	)
+
+	BeforeEach(func() {
+		nodeNames = []string{}
+	})
+
+	Context("when a pod with controller reference is scheduled", func() {
+		It("should label the node", func() {
+			name := "spark"
+			namespace := "big-data"
+			worker := &appsv1.StatefulSet{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "StatefulSet",
+					APIVersion: "apps/v1",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "spark-worker",
+					Namespace: namespace,
+					UID:       "uid1",
+				},
+				Spec: appsv1.StatefulSetSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app":     "alluxio",
+							"role":    "alluxio-worker",
+							"release": name,
+						},
 					},
+				},
+			}
+			pods := []*v1.Pod{
+				{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "spark-worker",
-						Namespace: "big-data",
-						UID:       "uid1",
-					},
-					Spec: appsv1.StatefulSetSpec{
-						Selector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{
-								"app":     "alluxio",
-								"role":    "alluxio-worker",
-								"release": "spark",
-							},
+						Name:      "spark-worker-0",
+						Namespace: namespace,
+						OwnerReferences: []metav1.OwnerReference{{
+							Kind:       "StatefulSet",
+							APIVersion: "apps/v1",
+							Name:       "spark-worker",
+							UID:        "uid1",
+							Controller: ptr.To(true),
+						}},
+						Labels: map[string]string{
+							"app":              "alluxio",
+							"role":             "alluxio-worker",
+							"release":          name,
+							"fluid.io/dataset": "big-data-spark",
 						},
+					},
+					Spec: v1.PodSpec{
+						NodeName: "node1",
 					},
 				},
-				pods: []*v1.Pod{
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name:      "spark-worker-0",
-							Namespace: "big-data",
-							OwnerReferences: []metav1.OwnerReference{{
-								Kind:       "StatefulSet",
-								APIVersion: "apps/v1",
-								Name:       "spark-worker",
-								UID:        "uid1",
-								Controller: ptr.To(true),
-							}},
-							Labels: map[string]string{
-								"app":              "alluxio",
-								"role":             "alluxio-worker",
-								"release":          "spark",
-								"fluid.io/dataset": "big-data-spark",
-							},
-						},
-						Spec: v1.PodSpec{
-							NodeName: "node1",
-						},
-					},
-				},
-				nodes: []*v1.Node{
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "node1",
-						},
-					},
-				},
-			},
-			nodeNames: []string{"node1"},
-		}, {
-			name: "add",
-			fields: fields{
-				name:      "hbase",
-				namespace: "big-data",
-				worker: &appsv1.StatefulSet{
-					TypeMeta: metav1.TypeMeta{
-						Kind:       "StatefulSet",
-						APIVersion: "apps/v1",
-					},
+			}
+			nodes := []*v1.Node{
+				{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "hbase-worker",
-						Namespace: "big-data",
-						UID:       "uid2",
-					},
-					Spec: appsv1.StatefulSetSpec{
-						Selector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{
-								"app":     "alluxio",
-								"role":    "alluxio-worker",
-								"release": "hbase",
-							},
-						},
+						Name: "node1",
 					},
 				},
-				pods: []*v1.Pod{
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name:      "hbase-worker-0",
-							Namespace: "big-data",
-							OwnerReferences: []metav1.OwnerReference{{
-								Kind:       "StatefulSet",
-								APIVersion: "apps/v1",
-								Name:       "hbase-worker",
-								UID:        "uid2",
-								Controller: ptr.To(true),
-							}},
-							Labels: map[string]string{
-								"app":              "alluxio",
-								"role":             "alluxio-worker",
-								"release":          "hbase",
-								"fluid.io/dataset": "big-data-hbase",
-							},
-						},
-						Spec: v1.PodSpec{
-							NodeName: "node3",
-						},
-					},
-				},
-				nodes: []*v1.Node{
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "node3",
-						},
-					}, {
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "node2",
-							Labels: map[string]string{
-								"fluid.io/s-default-hbase": "true",
-							},
-						},
-					},
-				},
-			},
-			nodeNames: []string{"node3"},
-		}, {
-			name: "noController",
-			fields: fields{
-				name:      "hbase-a",
-				namespace: "big-data",
-				worker: &appsv1.StatefulSet{
-					TypeMeta: metav1.TypeMeta{
-						Kind:       "StatefulSet",
-						APIVersion: "apps/v1",
-					},
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "hbase-a-worker",
-						Namespace: "big-data",
-						UID:       "uid3",
-					},
-					Spec: appsv1.StatefulSetSpec{
-						Selector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{
-								"app":     "alluxio",
-								"role":    "alluxio-worker",
-								"release": "hbase-a",
-							},
-						},
-					},
-				},
-				pods: []*v1.Pod{
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name:      "hbase-a-worker-0",
-							Namespace: "big-data",
-							Labels: map[string]string{
-								"app":              "alluxio",
-								"role":             "alluxio-worker",
-								"release":          "hbase-a",
-								"fluid.io/dataset": "big-data-hbase-a",
-							},
-						},
-						Spec: v1.PodSpec{
-							NodeName: "node5",
-						},
-					},
-				},
-				nodes: []*v1.Node{
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "node5",
-						},
-					}, {
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "node4",
-							Labels: map[string]string{
-								"fluid.io/s-default-hbase-a": "true",
-							},
-						},
-					},
-				},
-			},
-			nodeNames: []string{},
-		},
-	}
+			}
 
-	runtimeObjs := []runtime.Object{}
+			runtimeObjs := []runtime.Object{worker}
+			for _, pod := range pods {
+				runtimeObjs = append(runtimeObjs, pod)
+			}
+			for _, node := range nodes {
+				runtimeObjs = append(runtimeObjs, node)
+			}
 
-	for _, testcase := range testcases {
-		runtimeObjs = append(runtimeObjs, testcase.fields.worker)
+			c = fake.NewFakeClientWithScheme(testScheme, runtimeObjs...)
+			engine = getTestAlluxioEngineNode(c, name, namespace, true)
 
-		if testcase.fields.ds != nil {
-			runtimeObjs = append(runtimeObjs, testcase.fields.ds)
-		}
-		for _, pod := range testcase.fields.pods {
-			runtimeObjs = append(runtimeObjs, pod)
-		}
+			err := engine.SyncScheduleInfoToCacheNodes()
+			Expect(err).NotTo(HaveOccurred())
 
-		for _, node := range testcase.fields.nodes {
-			runtimeObjs = append(runtimeObjs, node)
-		}
-		// runtimeObjs = append(runtimeObjs, testcase.fields.pods)
-	}
-	c := fake.NewFakeClientWithScheme(testScheme, runtimeObjs...)
+			nodeList := &v1.NodeList{}
+			datasetLabels, err := labels.Parse(fmt.Sprintf("%s=true", engine.runtimeInfo.GetCommonLabelName()))
+			Expect(err).NotTo(HaveOccurred())
 
-	for _, testcase := range testcases {
-		engine := getTestAlluxioEngineNode(c, testcase.fields.name, testcase.fields.namespace, true)
-		err := engine.SyncScheduleInfoToCacheNodes()
-		if err != nil {
-			t.Errorf("Got error %t.", err)
-		}
+			err = c.List(context.TODO(), nodeList, &client.ListOptions{
+				LabelSelector: datasetLabels,
+			})
+			Expect(err).NotTo(HaveOccurred())
 
-		nodeList := &v1.NodeList{}
-		datasetLabels, err := labels.Parse(fmt.Sprintf("%s=true", engine.runtimeInfo.GetCommonLabelName()))
-		if err != nil {
-			return
-		}
-
-		err = c.List(context.TODO(), nodeList, &client.ListOptions{
-			LabelSelector: datasetLabels,
+			for _, node := range nodeList.Items {
+				nodeNames = append(nodeNames, node.Name)
+			}
+			Expect(nodeNames).To(ConsistOf("node1"))
 		})
+	})
 
-		if err != nil {
-			t.Errorf("Got error %t.", err)
-		}
+	Context("when a pod exists without label on node", func() {
+		It("should add the label to the node", func() {
+			name := "hbase"
+			namespace := "big-data"
+			worker := &appsv1.StatefulSet{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "StatefulSet",
+					APIVersion: "apps/v1",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "hbase-worker",
+					Namespace: namespace,
+					UID:       "uid2",
+				},
+				Spec: appsv1.StatefulSetSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app":     "alluxio",
+							"role":    "alluxio-worker",
+							"release": name,
+						},
+					},
+				},
+			}
+			pods := []*v1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "hbase-worker-0",
+						Namespace: namespace,
+						OwnerReferences: []metav1.OwnerReference{{
+							Kind:       "StatefulSet",
+							APIVersion: "apps/v1",
+							Name:       "hbase-worker",
+							UID:        "uid2",
+							Controller: ptr.To(true),
+						}},
+						Labels: map[string]string{
+							"app":              "alluxio",
+							"role":             "alluxio-worker",
+							"release":          name,
+							"fluid.io/dataset": "big-data-hbase",
+						},
+					},
+					Spec: v1.PodSpec{
+						NodeName: "node3",
+					},
+				},
+			}
+			nodes := []*v1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node3",
+					},
+				}, {
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node2",
+						Labels: map[string]string{
+							"fluid.io/s-default-hbase": "true",
+						},
+					},
+				},
+			}
 
-		nodeNames := []string{}
-		for _, node := range nodeList.Items {
-			nodeNames = append(nodeNames, node.Name)
-		}
+			runtimeObjs := []runtime.Object{worker}
+			for _, pod := range pods {
+				runtimeObjs = append(runtimeObjs, pod)
+			}
+			for _, node := range nodes {
+				runtimeObjs = append(runtimeObjs, node)
+			}
 
-		if len(testcase.nodeNames) == 0 && len(nodeNames) == 0 {
-			continue
-		}
+			c = fake.NewFakeClientWithScheme(testScheme, runtimeObjs...)
+			engine = getTestAlluxioEngineNode(c, name, namespace, true)
 
-		if !reflect.DeepEqual(testcase.nodeNames, nodeNames) {
-			t.Errorf("test case %v fail to sync node labels, wanted %v, got %v", testcase.name, testcase.nodeNames, nodeNames)
-		}
+			err := engine.SyncScheduleInfoToCacheNodes()
+			Expect(err).NotTo(HaveOccurred())
 
-	}
-}
+			nodeList := &v1.NodeList{}
+			datasetLabels, err := labels.Parse(fmt.Sprintf("%s=true", engine.runtimeInfo.GetCommonLabelName()))
+			Expect(err).NotTo(HaveOccurred())
+
+			err = c.List(context.TODO(), nodeList, &client.ListOptions{
+				LabelSelector: datasetLabels,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, node := range nodeList.Items {
+				nodeNames = append(nodeNames, node.Name)
+			}
+			Expect(nodeNames).To(ConsistOf("node3"))
+		})
+	})
+
+	Context("when a pod has no controller reference", func() {
+		It("should not label the node", func() {
+			name := "hbase-a"
+			namespace := "big-data"
+			worker := &appsv1.StatefulSet{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "StatefulSet",
+					APIVersion: "apps/v1",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "hbase-a-worker",
+					Namespace: namespace,
+					UID:       "uid3",
+				},
+				Spec: appsv1.StatefulSetSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app":     "alluxio",
+							"role":    "alluxio-worker",
+							"release": name,
+						},
+					},
+				},
+			}
+			pods := []*v1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "hbase-a-worker-0",
+						Namespace: namespace,
+						Labels: map[string]string{
+							"app":              "alluxio",
+							"role":             "alluxio-worker",
+							"release":          name,
+							"fluid.io/dataset": "big-data-hbase-a",
+						},
+					},
+					Spec: v1.PodSpec{
+						NodeName: "node5",
+					},
+				},
+			}
+			nodes := []*v1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node5",
+					},
+				}, {
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node4",
+						Labels: map[string]string{
+							"fluid.io/s-default-hbase-a": "true",
+						},
+					},
+				},
+			}
+
+			runtimeObjs := []runtime.Object{worker}
+			for _, pod := range pods {
+				runtimeObjs = append(runtimeObjs, pod)
+			}
+			for _, node := range nodes {
+				runtimeObjs = append(runtimeObjs, node)
+			}
+
+			c = fake.NewFakeClientWithScheme(testScheme, runtimeObjs...)
+			engine = getTestAlluxioEngineNode(c, name, namespace, true)
+
+			err := engine.SyncScheduleInfoToCacheNodes()
+			Expect(err).NotTo(HaveOccurred())
+
+			nodeList := &v1.NodeList{}
+			datasetLabels, err := labels.Parse(fmt.Sprintf("%s=true", engine.runtimeInfo.GetCommonLabelName()))
+			Expect(err).NotTo(HaveOccurred())
+
+			err = c.List(context.TODO(), nodeList, &client.ListOptions{
+				LabelSelector: datasetLabels,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(nodeList.Items).To(BeEmpty())
+		})
+	})
+})
