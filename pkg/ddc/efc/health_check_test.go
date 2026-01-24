@@ -17,8 +17,10 @@
 package efc
 
 import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
 	"k8s.io/client-go/tools/record"
-	"testing"
 
 	"github.com/fluid-cloudnative/fluid/pkg/common"
 	"k8s.io/utils/ptr"
@@ -35,41 +37,28 @@ import (
 	ctrlhelper "github.com/fluid-cloudnative/fluid/pkg/ctrl"
 )
 
-func TestCheckRuntimeHealthy(t *testing.T) {
-	type fields struct {
-		runtime         *datav1alpha1.EFCRuntime
-		worker          *appsv1.StatefulSet
-		master          *appsv1.StatefulSet
-		fuse            *appsv1.DaemonSet
-		workerEndPoints *v1.ConfigMap
-		name            string
-		namespace       string
-	}
-	tests := []struct {
-		name    string
-		wantErr bool
-		fields  fields
-	}{
-		{
-			name:    "healthy",
-			wantErr: false,
-			fields: fields{
-				name:      "health-data",
-				namespace: "big-data",
-				runtime: &datav1alpha1.EFCRuntime{
+const (
+	healthCheckTestNamespace = "big-data"
+)
+
+var _ = Describe("EFCEngine Health Check", Label("pkg.ddc.efc.health_check_test.go"), func() {
+	Describe("CheckRuntimeHealthy", func() {
+		Context("when all components are healthy", func() {
+			It("should return no error", func() {
+				efcRuntime := &datav1alpha1.EFCRuntime{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "health-data",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: datav1alpha1.EFCRuntimeSpec{
 						Replicas: 1,
 						Fuse:     datav1alpha1.EFCFuseSpec{},
 					},
-				},
-				master: &appsv1.StatefulSet{
+				}
+				master := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "health-data-master",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](1),
@@ -78,11 +67,11 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      1,
 						ReadyReplicas: 1,
 					},
-				},
-				worker: &appsv1.StatefulSet{
+				}
+				worker := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "health-data-worker",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](1),
@@ -92,47 +81,77 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      1,
 						ReadyReplicas: 1,
 					},
-				},
-				fuse: &appsv1.DaemonSet{
+				}
+				fuse := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "health-data-fuse",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Status: appsv1.DaemonSetStatus{
 						NumberUnavailable: 0,
 					},
-				},
-				workerEndPoints: &v1.ConfigMap{
+				}
+				workerEndPoints := &v1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "health-data-worker-endpoints",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Data: map[string]string{
 						WorkerEndpointsDataName: workerEndpointsConfigMapData,
 					},
-				},
-			},
-		},
-		{
-			name:    "master-no-healthy",
-			wantErr: true,
-			fields: fields{
-				name:      "master-no-health-data",
-				namespace: "big-data",
-				runtime: &datav1alpha1.EFCRuntime{
+				}
+				data := &datav1alpha1.Dataset{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "health-data",
+						Namespace: healthCheckTestNamespace,
+					},
+				}
+
+				s := runtime.NewScheme()
+				s.AddKnownTypes(datav1alpha1.GroupVersion, efcRuntime)
+				s.AddKnownTypes(datav1alpha1.GroupVersion, data)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, worker)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, fuse)
+				s.AddKnownTypes(v1.SchemeGroupVersion, workerEndPoints)
+				err := v1.AddToScheme(s)
+				Expect(err).NotTo(HaveOccurred())
+
+				mockClient := fake.NewFakeClientWithScheme(s, efcRuntime, data, worker, master, fuse, workerEndPoints)
+				e := &EFCEngine{
+					runtime:   efcRuntime,
+					name:      "health-data",
+					namespace: healthCheckTestNamespace,
+					Client:    mockClient,
+					Log:       ctrl.Log.WithName("health-data"),
+					Recorder:  record.NewFakeRecorder(1),
+				}
+
+				runtimeInfo, err := base.BuildRuntimeInfo("health-data", healthCheckTestNamespace, common.EFCRuntime)
+				Expect(err).NotTo(HaveOccurred())
+
+				e.Helper = ctrlhelper.BuildHelper(runtimeInfo, mockClient, e.Log)
+
+				healthError := e.CheckRuntimeHealthy()
+				Expect(healthError).NotTo(HaveOccurred())
+			})
+		})
+
+		Context("when master is not healthy", func() {
+			It("should return an error", func() {
+				efcRuntime := &datav1alpha1.EFCRuntime{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "master-no-health-data",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: datav1alpha1.EFCRuntimeSpec{
 						Replicas: 1,
 						Fuse:     datav1alpha1.EFCFuseSpec{},
 					},
-				},
-				master: &appsv1.StatefulSet{
+				}
+				master := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "master-no-health-data-master",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](1),
@@ -141,11 +160,11 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      1,
 						ReadyReplicas: 0,
 					},
-				},
-				worker: &appsv1.StatefulSet{
+				}
+				worker := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "master-no-health-data-worker",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](1),
@@ -155,47 +174,77 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      1,
 						ReadyReplicas: 1,
 					},
-				},
-				fuse: &appsv1.DaemonSet{
+				}
+				fuse := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "master-no-health-data-fuse",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Status: appsv1.DaemonSetStatus{
 						NumberUnavailable: 0,
 					},
-				},
-				workerEndPoints: &v1.ConfigMap{
+				}
+				workerEndPoints := &v1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "master-no-health-data-worker-endpoints",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Data: map[string]string{
 						WorkerEndpointsDataName: workerEndpointsConfigMapData,
 					},
-				},
-			},
-		},
-		{
-			name:    "worker-no-healthy",
-			wantErr: true,
-			fields: fields{
-				name:      "worker-no-health-data",
-				namespace: "big-data",
-				runtime: &datav1alpha1.EFCRuntime{
+				}
+				data := &datav1alpha1.Dataset{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "master-no-health-data",
+						Namespace: healthCheckTestNamespace,
+					},
+				}
+
+				s := runtime.NewScheme()
+				s.AddKnownTypes(datav1alpha1.GroupVersion, efcRuntime)
+				s.AddKnownTypes(datav1alpha1.GroupVersion, data)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, worker)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, fuse)
+				s.AddKnownTypes(v1.SchemeGroupVersion, workerEndPoints)
+				err := v1.AddToScheme(s)
+				Expect(err).NotTo(HaveOccurred())
+
+				mockClient := fake.NewFakeClientWithScheme(s, efcRuntime, data, worker, master, fuse, workerEndPoints)
+				e := &EFCEngine{
+					runtime:   efcRuntime,
+					name:      "master-no-health-data",
+					namespace: healthCheckTestNamespace,
+					Client:    mockClient,
+					Log:       ctrl.Log.WithName("master-no-health-data"),
+					Recorder:  record.NewFakeRecorder(1),
+				}
+
+				runtimeInfo, err := base.BuildRuntimeInfo("master-no-health-data", healthCheckTestNamespace, common.EFCRuntime)
+				Expect(err).NotTo(HaveOccurred())
+
+				e.Helper = ctrlhelper.BuildHelper(runtimeInfo, mockClient, e.Log)
+
+				healthError := e.CheckRuntimeHealthy()
+				Expect(healthError).To(HaveOccurred())
+			})
+		})
+
+		Context("when worker is not healthy", func() {
+			It("should return an error", func() {
+				efcRuntime := &datav1alpha1.EFCRuntime{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "worker-no-health-data",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: datav1alpha1.EFCRuntimeSpec{
 						Replicas: 1,
 						Fuse:     datav1alpha1.EFCFuseSpec{},
 					},
-				},
-				master: &appsv1.StatefulSet{
+				}
+				master := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "worker-no-health-data-master",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](1),
@@ -204,11 +253,11 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      1,
 						ReadyReplicas: 1,
 					},
-				},
-				worker: &appsv1.StatefulSet{
+				}
+				worker := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "worker-no-health-data-worker",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](2),
@@ -218,47 +267,77 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      2,
 						ReadyReplicas: 0,
 					},
-				},
-				fuse: &appsv1.DaemonSet{
+				}
+				fuse := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "worker-no-health-data-fuse",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Status: appsv1.DaemonSetStatus{
 						NumberUnavailable: 0,
 					},
-				},
-				workerEndPoints: &v1.ConfigMap{
+				}
+				workerEndPoints := &v1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "worker-no-health-data-worker-endpoints",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Data: map[string]string{
 						WorkerEndpointsDataName: workerEndpointsConfigMapData,
 					},
-				},
-			},
-		},
-		{
-			name:    "worker-partial-healthy",
-			wantErr: false,
-			fields: fields{
-				name:      "worker-partial-health-data",
-				namespace: "big-data",
-				runtime: &datav1alpha1.EFCRuntime{
+				}
+				data := &datav1alpha1.Dataset{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "worker-no-health-data",
+						Namespace: healthCheckTestNamespace,
+					},
+				}
+
+				s := runtime.NewScheme()
+				s.AddKnownTypes(datav1alpha1.GroupVersion, efcRuntime)
+				s.AddKnownTypes(datav1alpha1.GroupVersion, data)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, worker)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, fuse)
+				s.AddKnownTypes(v1.SchemeGroupVersion, workerEndPoints)
+				err := v1.AddToScheme(s)
+				Expect(err).NotTo(HaveOccurred())
+
+				mockClient := fake.NewFakeClientWithScheme(s, efcRuntime, data, worker, master, fuse, workerEndPoints)
+				e := &EFCEngine{
+					runtime:   efcRuntime,
+					name:      "worker-no-health-data",
+					namespace: healthCheckTestNamespace,
+					Client:    mockClient,
+					Log:       ctrl.Log.WithName("worker-no-health-data"),
+					Recorder:  record.NewFakeRecorder(1),
+				}
+
+				runtimeInfo, err := base.BuildRuntimeInfo("worker-no-health-data", healthCheckTestNamespace, common.EFCRuntime)
+				Expect(err).NotTo(HaveOccurred())
+
+				e.Helper = ctrlhelper.BuildHelper(runtimeInfo, mockClient, e.Log)
+
+				healthError := e.CheckRuntimeHealthy()
+				Expect(healthError).To(HaveOccurred())
+			})
+		})
+
+		Context("when worker is partially healthy", func() {
+			It("should return no error", func() {
+				efcRuntime := &datav1alpha1.EFCRuntime{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "worker-partial-health-data",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: datav1alpha1.EFCRuntimeSpec{
 						Replicas: 1,
 						Fuse:     datav1alpha1.EFCFuseSpec{},
 					},
-				},
-				master: &appsv1.StatefulSet{
+				}
+				master := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "worker-partial-health-data-master",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](1),
@@ -267,11 +346,11 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      1,
 						ReadyReplicas: 1,
 					},
-				},
-				worker: &appsv1.StatefulSet{
+				}
+				worker := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "worker-partial-health-data-worker",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](2),
@@ -281,47 +360,77 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      2,
 						ReadyReplicas: 1,
 					},
-				},
-				fuse: &appsv1.DaemonSet{
+				}
+				fuse := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "worker-partial-health-data-fuse",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Status: appsv1.DaemonSetStatus{
 						NumberUnavailable: 0,
 					},
-				},
-				workerEndPoints: &v1.ConfigMap{
+				}
+				workerEndPoints := &v1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "worker-partial-health-data-worker-endpoints",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Data: map[string]string{
 						WorkerEndpointsDataName: workerEndpointsConfigMapData,
 					},
-				},
-			},
-		},
-		{
-			name:    "fuse-no-healthy",
-			wantErr: false, // fluid assumes fuse is always healthy
-			fields: fields{
-				name:      "fuse-no-health-data",
-				namespace: "big-data",
-				runtime: &datav1alpha1.EFCRuntime{
+				}
+				data := &datav1alpha1.Dataset{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "worker-partial-health-data",
+						Namespace: healthCheckTestNamespace,
+					},
+				}
+
+				s := runtime.NewScheme()
+				s.AddKnownTypes(datav1alpha1.GroupVersion, efcRuntime)
+				s.AddKnownTypes(datav1alpha1.GroupVersion, data)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, worker)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, fuse)
+				s.AddKnownTypes(v1.SchemeGroupVersion, workerEndPoints)
+				err := v1.AddToScheme(s)
+				Expect(err).NotTo(HaveOccurred())
+
+				mockClient := fake.NewFakeClientWithScheme(s, efcRuntime, data, worker, master, fuse, workerEndPoints)
+				e := &EFCEngine{
+					runtime:   efcRuntime,
+					name:      "worker-partial-health-data",
+					namespace: healthCheckTestNamespace,
+					Client:    mockClient,
+					Log:       ctrl.Log.WithName("worker-partial-health-data"),
+					Recorder:  record.NewFakeRecorder(1),
+				}
+
+				runtimeInfo, err := base.BuildRuntimeInfo("worker-partial-health-data", healthCheckTestNamespace, common.EFCRuntime)
+				Expect(err).NotTo(HaveOccurred())
+
+				e.Helper = ctrlhelper.BuildHelper(runtimeInfo, mockClient, e.Log)
+
+				healthError := e.CheckRuntimeHealthy()
+				Expect(healthError).NotTo(HaveOccurred())
+			})
+		})
+
+		Context("when fuse is not healthy", func() {
+			It("should return no error (fluid assumes fuse is always healthy)", func() {
+				efcRuntime := &datav1alpha1.EFCRuntime{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "fuse-no-health-data",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: datav1alpha1.EFCRuntimeSpec{
 						Replicas: 1,
 						Fuse:     datav1alpha1.EFCFuseSpec{},
 					},
-				},
-				master: &appsv1.StatefulSet{
+				}
+				master := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "fuse-no-health-data-master",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](1),
@@ -330,11 +439,11 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      1,
 						ReadyReplicas: 1,
 					},
-				},
-				worker: &appsv1.StatefulSet{
+				}
+				worker := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "fuse-no-health-data-worker",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](1),
@@ -344,47 +453,77 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      1,
 						ReadyReplicas: 1,
 					},
-				},
-				fuse: &appsv1.DaemonSet{
+				}
+				fuse := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "fuse-no-health-data-fuse",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Status: appsv1.DaemonSetStatus{
 						NumberUnavailable: 1,
 					},
-				},
-				workerEndPoints: &v1.ConfigMap{
+				}
+				workerEndPoints := &v1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "fuse-no-health-data-worker-endpoints",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Data: map[string]string{
 						WorkerEndpointsDataName: workerEndpointsConfigMapData,
 					},
-				},
-			},
-		},
-		{
-			name:    "endpoints-no-healthy",
-			wantErr: true,
-			fields: fields{
-				name:      "endpoints-no-health-data",
-				namespace: "big-data",
-				runtime: &datav1alpha1.EFCRuntime{
+				}
+				data := &datav1alpha1.Dataset{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "fuse-no-health-data",
+						Namespace: healthCheckTestNamespace,
+					},
+				}
+
+				s := runtime.NewScheme()
+				s.AddKnownTypes(datav1alpha1.GroupVersion, efcRuntime)
+				s.AddKnownTypes(datav1alpha1.GroupVersion, data)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, worker)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, fuse)
+				s.AddKnownTypes(v1.SchemeGroupVersion, workerEndPoints)
+				err := v1.AddToScheme(s)
+				Expect(err).NotTo(HaveOccurred())
+
+				mockClient := fake.NewFakeClientWithScheme(s, efcRuntime, data, worker, master, fuse, workerEndPoints)
+				e := &EFCEngine{
+					runtime:   efcRuntime,
+					name:      "fuse-no-health-data",
+					namespace: healthCheckTestNamespace,
+					Client:    mockClient,
+					Log:       ctrl.Log.WithName("fuse-no-health-data"),
+					Recorder:  record.NewFakeRecorder(1),
+				}
+
+				runtimeInfo, err := base.BuildRuntimeInfo("fuse-no-health-data", healthCheckTestNamespace, common.EFCRuntime)
+				Expect(err).NotTo(HaveOccurred())
+
+				e.Helper = ctrlhelper.BuildHelper(runtimeInfo, mockClient, e.Log)
+
+				healthError := e.CheckRuntimeHealthy()
+				Expect(healthError).NotTo(HaveOccurred())
+			})
+		})
+
+		Context("when endpoints config map is not found", func() {
+			It("should return an error", func() {
+				efcRuntime := &datav1alpha1.EFCRuntime{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "endpoints-no-health-data",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: datav1alpha1.EFCRuntimeSpec{
 						Replicas: 1,
 						Fuse:     datav1alpha1.EFCFuseSpec{},
 					},
-				},
-				master: &appsv1.StatefulSet{
+				}
+				master := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "endpoints-no-health-data-master",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](1),
@@ -393,11 +532,11 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      1,
 						ReadyReplicas: 1,
 					},
-				},
-				worker: &appsv1.StatefulSet{
+				}
+				worker := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "endpoints-no-health-data-worker",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: ptr.To[int32](1),
@@ -407,73 +546,60 @@ func TestCheckRuntimeHealthy(t *testing.T) {
 						Replicas:      1,
 						ReadyReplicas: 1,
 					},
-				},
-				fuse: &appsv1.DaemonSet{
+				}
+				fuse := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "endpoints-no-health-data-fuse",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Status: appsv1.DaemonSetStatus{
 						NumberUnavailable: 0,
 					},
-				},
-				workerEndPoints: &v1.ConfigMap{
+				}
+				// ConfigMap with wrong name (simulates not found)
+				workerEndPoints := &v1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "123",
-						Namespace: "big-data",
+						Namespace: healthCheckTestNamespace,
 					},
 					Data: map[string]string{
 						WorkerEndpointsDataName: workerEndpointsConfigMapData,
 					},
-				},
-			},
-		},
-	}
+				}
+				data := &datav1alpha1.Dataset{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "endpoints-no-health-data",
+						Namespace: healthCheckTestNamespace,
+					},
+				}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runtimeObjs := []runtime.Object{}
-			data := &datav1alpha1.Dataset{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      tt.fields.name,
-					Namespace: tt.fields.namespace,
-				},
-			}
+				s := runtime.NewScheme()
+				s.AddKnownTypes(datav1alpha1.GroupVersion, efcRuntime)
+				s.AddKnownTypes(datav1alpha1.GroupVersion, data)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, worker)
+				s.AddKnownTypes(appsv1.SchemeGroupVersion, fuse)
+				s.AddKnownTypes(v1.SchemeGroupVersion, workerEndPoints)
+				err := v1.AddToScheme(s)
+				Expect(err).NotTo(HaveOccurred())
 
-			s := runtime.NewScheme()
-			s.AddKnownTypes(datav1alpha1.GroupVersion, tt.fields.runtime)
-			s.AddKnownTypes(datav1alpha1.GroupVersion, data)
-			s.AddKnownTypes(appsv1.SchemeGroupVersion, tt.fields.worker)
-			s.AddKnownTypes(appsv1.SchemeGroupVersion, tt.fields.fuse)
-			s.AddKnownTypes(v1.SchemeGroupVersion, tt.fields.workerEndPoints)
+				mockClient := fake.NewFakeClientWithScheme(s, efcRuntime, data, worker, master, fuse, workerEndPoints)
+				e := &EFCEngine{
+					runtime:   efcRuntime,
+					name:      "endpoints-no-health-data",
+					namespace: healthCheckTestNamespace,
+					Client:    mockClient,
+					Log:       ctrl.Log.WithName("endpoints-no-health-data"),
+					Recorder:  record.NewFakeRecorder(1),
+				}
 
-			_ = v1.AddToScheme(s)
+				runtimeInfo, err := base.BuildRuntimeInfo("endpoints-no-health-data", healthCheckTestNamespace, common.EFCRuntime)
+				Expect(err).NotTo(HaveOccurred())
 
-			runtimeObjs = append(runtimeObjs, tt.fields.runtime, data, tt.fields.worker, tt.fields.master, tt.fields.fuse, tt.fields.workerEndPoints)
-			mockClient := fake.NewFakeClientWithScheme(s, runtimeObjs...)
-			e := &EFCEngine{
-				runtime:   tt.fields.runtime,
-				name:      tt.fields.name,
-				namespace: tt.fields.namespace,
-				Client:    mockClient,
-				Log:       ctrl.Log.WithName(tt.fields.name),
-				Recorder:  record.NewFakeRecorder(1),
-			}
+				e.Helper = ctrlhelper.BuildHelper(runtimeInfo, mockClient, e.Log)
 
-			runtimeInfo, err := base.BuildRuntimeInfo(tt.fields.name, tt.fields.namespace, common.EFCRuntime)
-			if err != nil {
-				t.Errorf("EFCEngine.CheckWorkersReady() error = %v", err)
-			}
-
-			e.Helper = ctrlhelper.BuildHelper(runtimeInfo, mockClient, e.Log)
-
-			healthError := e.CheckRuntimeHealthy()
-			hasErr := (healthError != nil)
-			if tt.wantErr != hasErr {
-				t.Errorf("testcase %s check runtime healthy ,hasErr %v, wantErr %v, err:%s", tt.name, hasErr, tt.wantErr, healthError)
-			}
-
+				healthError := e.CheckRuntimeHealthy()
+				Expect(healthError).To(HaveOccurred())
+			})
 		})
-	}
-
-}
+	})
+})
