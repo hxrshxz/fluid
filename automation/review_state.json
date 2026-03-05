@@ -1,0 +1,13 @@
+{
+  "prs": {
+    "123": {
+      "last_outcome": "",
+      "last_returncode": 0,
+      "last_rounds": 0,
+      "last_run_at": "",
+      "max_triggers": 5,
+      "triggers_used": 0
+    }
+  },
+  "version": 1
+}
