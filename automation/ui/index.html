@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fluid Automation Queue</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="page-header">
+      <h1>Fluid Automation Queue</h1>
+      <p class="note">Safety policy: no PR creation/open actions in this UI. Keep explicit user confirmation before any PR operation.</p>
+    </header>
+
+    <section class="panel flow-panel">
+      <h2>How to Use</h2>
+      <p class="help-text">Follow this exact flow each time so queue updates stay predictable.</p>
+      <ol class="flow-list">
+        <li><strong>Refresh queue</strong> to load latest issue parsing and state.</li>
+        <li><strong>Pick chunk</strong> from the table using Select.</li>
+        <li><strong>Run dry-run / execute</strong> using Daily Dry Run, then run real chunk work outside this UI.</li>
+        <li><strong>Update status</strong> for the selected chunk with status, PR URL, and notes.</li>
+      </ol>
+    </section>
+
+    <section class="panel quick-actions-panel">
+      <h2>Quick Actions</h2>
+      <p class="help-text">Use these for the common daily checks and controls.</p>
+      <div class="button-row quick-actions-row">
+        <button id="refreshButton" class="action-button" type="button">Refresh Queue</button>
+        <button id="reportButton" class="action-button" type="button">Queue Report</button>
+        <button id="dryRunButton" class="action-button" type="button">Daily Dry Run</button>
+        <button id="quickPauseToggle" class="action-button" type="button">Pause</button>
+      </div>
+      <p id="pauseStateLabel" class="help-text">Pause state: unknown</p>
+    </section>
+
+    <section class="panel">
+      <h2>Queue Status</h2>
+      <p class="help-text">These counters show the current state of all chunks.</p>
+      <div class="status-grid" id="statusCards"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Week Summary</h2>
+      <p class="help-text">This shows totals by week so you can track progress at a glance.</p>
+      <div class="table-wrap">
+        <table id="weekSummaryTable">
+          <thead>
+            <tr>
+              <th>Week</th>
+              <th>Total</th>
+              <th>Pending</th>
+              <th>In Progress</th>
+              <th>Blocked</th>
+              <th>Done</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Chunks</h2>
+      <p class="help-text">Filter chunks, then select one to prefill the update form.</p>
+      <div class="filters">
+        <label>Week <select id="weekFilter"></select></label>
+        <label>Status <select id="statusFilter"></select></label>
+        <label>Package <input id="packageFilter" type="text" placeholder="Search package"></label>
+      </div>
+      <div class="table-wrap">
+        <table id="chunkTable">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Week</th>
+              <th>Package</th>
+              <th>Status</th>
+              <th>PR URL</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel action-panel">
+      <h2>Run / Update</h2>
+      <p class="help-text">Use optional dry-run date and then update the selected chunk state.</p>
+      <div class="button-row compact-row">
+        <label class="inline">Dry-run date <input id="dryRunDate" type="date"></label>
+      </div>
+
+      <form id="pauseForm" class="subform">
+        <h3>Pause Control</h3>
+        <p class="help-text">Set or update pause reason, then save pause state explicitly.</p>
+        <label><input id="pauseToggle" type="checkbox"> Queue paused</label>
+        <label>Reason <input id="pauseReason" type="text" placeholder="Optional reason"></label>
+        <button type="submit">Save Pause State</button>
+      </form>
+
+      <form id="chunkForm" class="subform">
+        <h3>Update Selected Chunk</h3>
+        <p class="help-text">Submit any status, PR URL, or notes changes for the selected chunk.</p>
+        <p id="selectedChunkLabel">Selected chunk: none</p>
+        <label>Status
+          <select id="chunkStatus">
+            <option value="">(keep unchanged)</option>
+            <option value="pending">pending</option>
+            <option value="in_progress">in_progress</option>
+            <option value="blocked">blocked</option>
+            <option value="done">done</option>
+          </select>
+        </label>
+        <label>PR URL <input id="chunkPrUrl" type="url" placeholder="https://github.com/.../pull/..." /></label>
+        <label>Notes <input id="chunkNotes" type="text" placeholder="Status details"></label>
+        <button type="submit">Update Chunk</button>
+      </form>
+
+      <form id="reviewForm" class="subform">
+        <h3>Post-Review Runner</h3>
+        <p class="help-text">Run reviewer/bot triage for a PR. Leave PR empty to use latest open PR. Poll waits for bot comments before consuming a trigger.</p>
+        <label>PR Number <input id="reviewPrNumber" type="number" min="1" placeholder="123"></label>
+        <label><input id="reviewResolveLatestPr" type="checkbox" checked> Use latest open PR when number is empty</label>
+        <div class="filters">
+          <label>Fetch rounds
+            <input id="reviewRounds" type="number" min="1" max="5" value="3">
+          </label>
+          <label>Max triggers
+            <input id="reviewMaxTriggers" type="number" min="1" max="20" value="5">
+          </label>
+        </div>
+        <div class="filters">
+          <label>Poll rounds
+            <input id="reviewPollRounds" type="number" min="1" max="120" value="6">
+          </label>
+          <label>Poll interval (sec)
+            <input id="reviewPollIntervalSeconds" type="number" min="5" max="600" value="30">
+          </label>
+          <label>Poll timeout (min)
+            <input id="reviewPollTimeoutMinutes" type="number" min="1" max="120" value="10">
+          </label>
+        </div>
+        <div class="button-row compact-row">
+          <button id="reviewStateButton" type="button">Get Review State</button>
+          <button id="reviewRunButton" type="submit">Run Review Triage</button>
+          <button id="reviewResetButton" type="button">Reset Counter</button>
+        </div>
+        <p id="reviewStateLabel" class="help-text">Review state: unknown</p>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Output Log</h2>
+      <p class="help-text">This displays command output and API responses from your actions.</p>
+      <pre id="outputLog" aria-live="polite"></pre>
+    </section>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
