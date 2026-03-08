@@ -26,9 +26,12 @@ import (
 	datav1alpha1 "github.com/fluid-cloudnative/fluid/api/v1alpha1"
 	"github.com/fluid-cloudnative/fluid/pkg/common"
 	"github.com/fluid-cloudnative/fluid/pkg/ddc/alluxio"
+	"github.com/fluid-cloudnative/fluid/pkg/ddc/efc"
 	"github.com/fluid-cloudnative/fluid/pkg/ddc/goosefs"
 	"github.com/fluid-cloudnative/fluid/pkg/ddc/jindofsx"
 	"github.com/fluid-cloudnative/fluid/pkg/ddc/juicefs"
+	"github.com/fluid-cloudnative/fluid/pkg/ddc/thin"
+	"github.com/fluid-cloudnative/fluid/pkg/ddc/vineyard"
 	"github.com/fluid-cloudnative/fluid/pkg/utils/fake"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -44,13 +47,16 @@ const controllerNamespace = common.NamespaceFluidSystem
 var _ = Describe("runtime controller scaleout", func() {
 	var originalPodNamespace string
 	var hadOriginalPodNamespace bool
+	var originalResolveDefaultPrecheckFuncs func() map[string]CheckFunc
 
 	BeforeEach(func() {
 		originalPodNamespace, hadOriginalPodNamespace = os.LookupEnv(common.MyPodNamespace)
+		originalResolveDefaultPrecheckFuncs = resolveDefaultPrecheckFuncs
 	})
 
 	AfterEach(func() {
 		setPrecheckFunc(nil)
+		resolveDefaultPrecheckFuncs = originalResolveDefaultPrecheckFuncs
 		restoreEnv(common.MyPodNamespace, originalPodNamespace, hadOriginalPodNamespace)
 	})
 
@@ -196,6 +202,18 @@ var _ = Describe("runtime controller scaleout", func() {
 
 			Expect(getPrecheckFuncs()).To(HaveKey("alluxioruntime-controller"))
 		})
+
+		It("does not pin discovery-filtered defaults into package-global state", func() {
+			resolveDefaultPrecheckFuncs = func() map[string]CheckFunc {
+				return runtimePrecheckFuncs()
+			}
+			setPrecheckFunc(nil)
+
+			checks := getPrecheckFuncs()
+
+			Expect(checks).NotTo(BeNil())
+			Expect(precheckFuncs).To(BeNil())
+		})
 	})
 })
 
@@ -240,10 +258,13 @@ func runtimeObjects() []runtime.Object {
 
 func runtimePrecheckFuncs() map[string]CheckFunc {
 	return map[string]CheckFunc{
-		"alluxioruntime-controller": alluxio.Precheck,
-		"jindoruntime-controller":   jindofsx.Precheck,
-		"juicefsruntime-controller": juicefs.Precheck,
-		"goosefsruntime-controller": goosefs.Precheck,
+		"alluxioruntime-controller":  alluxio.Precheck,
+		"jindoruntime-controller":    jindofsx.Precheck,
+		"juicefsruntime-controller":  juicefs.Precheck,
+		"goosefsruntime-controller":  goosefs.Precheck,
+		"thinruntime-controller":     thin.Precheck,
+		"efcruntime-controller":      efc.Precheck,
+		"vineyardruntime-controller": vineyard.Precheck,
 	}
 }
 

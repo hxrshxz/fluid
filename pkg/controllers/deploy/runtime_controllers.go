@@ -58,6 +58,9 @@ var (
 		"efcruntime-controller":      efc.Precheck,
 		"vineyardruntime-controller": vineyard.Precheck,
 	}
+	resolveDefaultPrecheckFuncs = func() map[string]CheckFunc {
+		return filterOutDisabledRuntimes(defaultPrecheckFuncs)
+	}
 	precheckFuncs   map[string]CheckFunc
 	precheckFuncsMu sync.Mutex
 )
@@ -73,11 +76,11 @@ func getPrecheckFuncs() map[string]CheckFunc {
 	precheckFuncsMu.Lock()
 	defer precheckFuncsMu.Unlock()
 
-	if precheckFuncs == nil {
-		precheckFuncs = filterOutDisabledRuntimes(defaultPrecheckFuncs)
+	if precheckFuncs != nil {
+		return clonePrecheckFuncs(precheckFuncs)
 	}
 
-	return clonePrecheckFuncs(precheckFuncs)
+	return clonePrecheckFuncs(resolveDefaultPrecheckFuncs())
 }
 
 func clonePrecheckFuncs(checks map[string]CheckFunc) map[string]CheckFunc {
