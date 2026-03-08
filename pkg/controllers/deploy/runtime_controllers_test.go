@@ -43,14 +43,17 @@ const controllerNamespace = common.NamespaceFluidSystem
 
 var _ = Describe("runtime controller scaleout", func() {
 	var originalPrecheckFuncs map[string]CheckFunc
+	var originalPodNamespace string
+	var hadOriginalPodNamespace bool
 
 	BeforeEach(func() {
 		originalPrecheckFuncs = precheckFuncs
+		originalPodNamespace, hadOriginalPodNamespace = os.LookupEnv(common.MyPodNamespace)
 	})
 
 	AfterEach(func() {
 		setPrecheckFunc(originalPrecheckFuncs)
-		Expect(os.Unsetenv(common.MyPodNamespace)).To(Succeed())
+		restoreEnv(common.MyPodNamespace, originalPodNamespace, hadOriginalPodNamespace)
 	})
 
 	Describe("scaleoutDeploymentIfNeeded", func() {
@@ -224,4 +227,13 @@ func runtimePrecheckFuncs() map[string]CheckFunc {
 		"juicefsruntime-controller": juicefs.Precheck,
 		"goosefsruntime-controller": goosefs.Precheck,
 	}
+}
+
+func restoreEnv(key, value string, hadValue bool) {
+	if hadValue {
+		Expect(os.Setenv(key, value)).To(Succeed())
+		return
+	}
+
+	Expect(os.Unsetenv(key)).To(Succeed())
 }
