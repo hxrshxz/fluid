@@ -179,6 +179,26 @@ var _ = Describe("runtime controller scaleout", func() {
 			Expect(scaled).To(BeFalse())
 		})
 	})
+
+	Describe("precheck function isolation", func() {
+		It("does not retain caller mutations after setting precheck funcs", func() {
+			checks := runtimePrecheckFuncs()
+			setPrecheckFunc(checks)
+
+			delete(checks, "alluxioruntime-controller")
+
+			Expect(getPrecheckFuncs()).To(HaveKey("alluxioruntime-controller"))
+		})
+
+		It("returns a snapshot that callers can mutate without changing stored precheck funcs", func() {
+			setPrecheckFunc(runtimePrecheckFuncs())
+
+			checks := getPrecheckFuncs()
+			delete(checks, "alluxioruntime-controller")
+
+			Expect(getPrecheckFuncs()).To(HaveKey("alluxioruntime-controller"))
+		})
+	})
 })
 
 func newFakeClient(objects ...runtime.Object) client.Client {

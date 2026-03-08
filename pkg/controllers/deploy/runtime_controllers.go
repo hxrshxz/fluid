@@ -66,7 +66,7 @@ func setPrecheckFunc(checks map[string]CheckFunc) {
 	precheckFuncsMu.Lock()
 	defer precheckFuncsMu.Unlock()
 
-	precheckFuncs = checks
+	precheckFuncs = clonePrecheckFuncs(checks)
 }
 
 func getPrecheckFuncs() map[string]CheckFunc {
@@ -77,7 +77,20 @@ func getPrecheckFuncs() map[string]CheckFunc {
 		precheckFuncs = filterOutDisabledRuntimes(defaultPrecheckFuncs)
 	}
 
-	return precheckFuncs
+	return clonePrecheckFuncs(precheckFuncs)
+}
+
+func clonePrecheckFuncs(checks map[string]CheckFunc) map[string]CheckFunc {
+	if checks == nil {
+		return nil
+	}
+
+	clonedChecks := make(map[string]CheckFunc, len(checks))
+	for controllerName, checkFn := range checks {
+		clonedChecks[controllerName] = checkFn
+	}
+
+	return clonedChecks
 }
 
 func filterOutDisabledRuntimes(checks map[string]CheckFunc) (filteredChecks map[string]CheckFunc) {
