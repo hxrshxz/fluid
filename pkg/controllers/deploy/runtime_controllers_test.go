@@ -42,17 +42,15 @@ import (
 const controllerNamespace = common.NamespaceFluidSystem
 
 var _ = Describe("runtime controller scaleout", func() {
-	var originalPrecheckFuncs map[string]CheckFunc
 	var originalPodNamespace string
 	var hadOriginalPodNamespace bool
 
 	BeforeEach(func() {
-		originalPrecheckFuncs = precheckFuncs
 		originalPodNamespace, hadOriginalPodNamespace = os.LookupEnv(common.MyPodNamespace)
 	})
 
 	AfterEach(func() {
-		setPrecheckFunc(originalPrecheckFuncs)
+		setPrecheckFunc(nil)
 		restoreEnv(common.MyPodNamespace, originalPodNamespace, hadOriginalPodNamespace)
 	})
 
