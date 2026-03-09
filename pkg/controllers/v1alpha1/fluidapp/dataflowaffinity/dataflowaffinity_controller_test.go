@@ -120,6 +120,10 @@ var _ = Describe("DataOpJobReconciler", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Requeue).To(BeFalse())
+
+				updatedJob := &batchv1.Job{}
+				Expect(c.Get(context.TODO(), types.NamespacedName{Name: "test-job", Namespace: "default"}, updatedJob)).To(Succeed())
+				Expect(updatedJob.Annotations).To(HaveKeyWithValue(common.AnnotationDataFlowAffinityInject, "true"))
 			})
 		})
 
@@ -181,6 +185,12 @@ var _ = Describe("DataOpJobReconciler", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result.Requeue).To(BeFalse())
+
+				updatedJob := &batchv1.Job{}
+				Expect(c.Get(context.TODO(), types.NamespacedName{Name: "complete-job", Namespace: "default"}, updatedJob)).To(Succeed())
+				Expect(updatedJob.Annotations).To(HaveKeyWithValue(common.AnnotationDataFlowCustomizedAffinityPrefix+common.K8sNodeNameLabelKey, "node01"))
+				Expect(updatedJob.Annotations).To(HaveKeyWithValue(common.AnnotationDataFlowCustomizedAffinityPrefix+common.K8sRegionLabelKey, "region01"))
+				Expect(updatedJob.Annotations).To(HaveKeyWithValue(common.AnnotationDataFlowCustomizedAffinityPrefix+common.K8sZoneLabelKey, "zone01"))
 			})
 		})
 	})
