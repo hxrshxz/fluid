@@ -17,171 +17,125 @@
 package v1alpha1
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/fluid-cloudnative/fluid/pkg/common"
 )
 
-func TestDataset_RemoveDataOperationInProgress(t *testing.T) {
-	type fields struct {
-		TypeMeta   v1.TypeMeta
-		ObjectMeta v1.ObjectMeta
-		Spec       DatasetSpec
-		Status     DatasetStatus
-	}
-	type args struct {
-		operationType string
-		name          string
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   string
-	}{
-		{
-			name: "test1",
-			fields: fields{
-				Status: DatasetStatus{
-					OperationRef: map[string]string{
-						"DataLoad": "test1",
-					},
-				},
-			},
-			args: args{
-				operationType: "DataLoad",
-				name:          "test1",
-			},
-			want: "",
-		},
-		{
-			name: "test2",
-			fields: fields{
-				Status: DatasetStatus{
-					OperationRef: map[string]string{
-						"DataLoad": "test1,test2",
-					},
-				},
-			},
-			args: args{
-				operationType: "DataLoad",
-				name:          "test1",
-			},
-			want: "test2",
-		},
-		{
-			name: "test3",
-			fields: fields{
-				Status: DatasetStatus{},
-			},
-			args: args{
-				operationType: "DataLoad",
-				name:          "test1",
-			},
-			want: "",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dataset := &Dataset{
-				TypeMeta:   tt.fields.TypeMeta,
-				ObjectMeta: tt.fields.ObjectMeta,
-				Spec:       tt.fields.Spec,
-				Status:     tt.fields.Status,
-			}
-			if got := dataset.RemoveDataOperationInProgress(tt.args.operationType, tt.args.name); got != tt.want {
-				t.Errorf("RemoveDataOperationInProgress() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
+var _ = Describe("Dataset", func() {
+	DescribeTable("RemoveDataOperationInProgress",
+		func(status DatasetStatus, operationType string, name string, expected string, expectedRefs map[string]string) {
+			dataset := &Dataset{Status: status}
 
-func TestDataset_SetDataOperationInProgress(t *testing.T) {
-	type fields struct {
-		TypeMeta   v1.TypeMeta
-		ObjectMeta v1.ObjectMeta
-		Spec       DatasetSpec
-		Status     DatasetStatus
-	}
-	type args struct {
-		operationType string
-		name          string
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   string
-	}{
-		{
-			name: "test1",
-			fields: fields{
-				Status: DatasetStatus{},
-			},
-			args: args{
-				operationType: "DataLoad",
-				name:          "test1",
-			},
-			want: "test1",
+			result := dataset.RemoveDataOperationInProgress(operationType, name)
+
+			Expect(result).To(Equal(expected))
+			Expect(dataset.Status.OperationRef).To(Equal(expectedRefs))
 		},
-		{
-			name: "test2",
-			fields: fields{
-				Status: DatasetStatus{
-					OperationRef: map[string]string{
-						"DataLoad": "test1",
-					},
-				},
-			},
-			args: args{
-				operationType: "DataLoad",
-				name:          "test2",
-			},
-			want: "test1,test2",
+		Entry("removes the only running operation",
+			DatasetStatus{OperationRef: map[string]string{"DataLoad": "test1"}},
+			"DataLoad",
+			"test1",
+			"",
+			map[string]string{},
+		),
+		Entry("removes one operation from a comma-separated list",
+			DatasetStatus{OperationRef: map[string]string{"DataLoad": "test1,test2"}},
+			"DataLoad",
+			"test1",
+			"test2",
+			map[string]string{"DataLoad": "test2"},
+		),
+		Entry("returns empty string when no operation map exists",
+			DatasetStatus{},
+			"DataLoad",
+			"test1",
+			"",
+			nil,
+		),
+		Entry("does not create a blank entry for an unrelated operation type",
+			DatasetStatus{OperationRef: map[string]string{"DataLoad": "test1"}},
+			"DataBackup",
+			"backup1",
+			"",
+			map[string]string{"DataLoad": "test1"},
+		),
+	)
+
+	DescribeTable("SetDataOperationInProgress",
+		func(status DatasetStatus, operationType string, name string, expected string) {
+			dataset := &Dataset{Status: status}
+
+			dataset.SetDataOperationInProgress(operationType, name)
+
+			Expect(dataset.GetDataOperationInProgress(operationType)).To(Equal(expected))
 		},
-		{
-			name: "test3",
-			fields: fields{
-				Status: DatasetStatus{
-					OperationRef: map[string]string{
-						"DataLoad": "test1",
-					},
-				},
+		Entry("initializes the operation map", DatasetStatus{}, "DataLoad", "test1", "test1"),
+		Entry("appends a different operation name", DatasetStatus{OperationRef: map[string]string{"DataLoad": "test1"}}, "DataLoad", "test2", "test1,test2"),
+		Entry("stores another operation type independently", DatasetStatus{OperationRef: map[string]string{"DataLoad": "test1"}}, "DataMigrate", "test", "test"),
+		Entry("avoids duplicating the same operation name", DatasetStatus{OperationRef: map[string]string{"DataLoad": "test"}}, "DataLoad", "test", "test"),
+	)
+
+	It("returns false when a runtime does not match the requested binding target", func() {
+		dataset := &Dataset{
+			Status: DatasetStatus{
+				Runtimes: []Runtime{{
+					Name:      "runtime-a",
+					Namespace: "fluid-system",
+					Category:  common.AccelerateCategory,
+				}},
 			},
-			args: args{
-				operationType: "DataMigrate",
-				name:          "test",
+		}
+
+		Expect(dataset.CanbeBound("runtime-b", "fluid-system", common.AccelerateCategory)).To(BeFalse())
+	})
+
+	It("returns true when a runtime matches the requested binding target", func() {
+		dataset := &Dataset{
+			Status: DatasetStatus{
+				Runtimes: []Runtime{{
+					Name:      "runtime-a",
+					Namespace: "fluid-system",
+					Category:  common.AccelerateCategory,
+				}},
 			},
-			want: "test",
+		}
+
+		Expect(dataset.CanbeBound("runtime-a", "fluid-system", common.AccelerateCategory)).To(BeTrue())
+	})
+
+	DescribeTable("IsExclusiveMode",
+		func(mode PlacementMode, expected bool) {
+			dataset := &Dataset{Spec: DatasetSpec{PlacementMode: mode}}
+
+			Expect(dataset.IsExclusiveMode()).To(Equal(expected))
 		},
-		{
-			name: "test4",
-			fields: fields{
-				Status: DatasetStatus{
-					OperationRef: map[string]string{
-						"DataLoad": "test",
-					},
-				},
+		Entry("defaults to exclusive", DefaultMode, true),
+		Entry("explicit exclusive mode", ExclusiveMode, true),
+		Entry("shared mode", ShareMode, false),
+	)
+
+	It("preserves embedded metadata while mutating operation refs", func() {
+		dataset := &Dataset{
+			TypeMeta: metav1.TypeMeta{Kind: "Dataset"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "dataset-sample",
+				Namespace: "fluid-system",
 			},
-			args: args{
-				operationType: "DataLoad",
-				name:          "test",
+			Spec: DatasetSpec{
+				Tolerations: []corev1.Toleration{{Key: "dedicated"}},
 			},
-			want: "test",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dataset := &Dataset{
-				TypeMeta:   tt.fields.TypeMeta,
-				ObjectMeta: tt.fields.ObjectMeta,
-				Spec:       tt.fields.Spec,
-				Status:     tt.fields.Status,
-			}
-			dataset.SetDataOperationInProgress(tt.args.operationType, tt.args.name)
-			if got := dataset.GetDataOperationInProgress(tt.args.operationType); got != tt.want {
-				t.Errorf("SetDataOperationInProgress() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
+			Status: DatasetStatus{},
+		}
+
+		dataset.SetDataOperationInProgress("DataLoad", "job-1")
+
+		Expect(dataset.Name).To(Equal("dataset-sample"))
+		Expect(dataset.Namespace).To(Equal("fluid-system"))
+		Expect(dataset.Spec.Tolerations).To(HaveLen(1))
+	})
+})

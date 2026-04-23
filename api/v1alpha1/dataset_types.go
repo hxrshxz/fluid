@@ -378,6 +378,9 @@ func (dataset *Dataset) RemoveDataOperationInProgress(operationType, name string
 	if dataset.Status.OperationRef == nil {
 		return ""
 	}
+	if dataset.Status.OperationRef[operationType] == "" {
+		return ""
+	}
 	dataOpKeys := strings.Split(dataset.Status.OperationRef[operationType], ",")
 	if len(dataOpKeys) == 1 && dataOpKeys[0] == name {
 		delete(dataset.Status.OperationRef, operationType)
